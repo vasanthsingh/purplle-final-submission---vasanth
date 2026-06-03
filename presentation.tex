@@ -1,0 +1,560 @@
+\documentclass[aspectratio=169, 11pt]{beamer}
+
+\usetheme{Madrid}
+\usecolortheme{seahorse}
+
+\definecolor{teal}{RGB}{13, 148, 136}
+\definecolor{amber}{RGB}{245, 158, 11}
+
+\setbeamercolor{structure}{fg=teal}
+\setbeamercolor{title}{fg=white, bg=teal}
+\setbeamercolor{frametitle}{fg=white, bg=teal}
+\setbeamercolor{block title}{bg=teal, fg=white}
+\setbeamercolor{block body}{bg=teal!8}
+\setbeamercolor{item}{fg=teal}
+\setbeamertemplate{navigation symbols}{}
+
+\usepackage[T1]{fontenc}
+\usepackage{lmodern}
+\usepackage{booktabs}
+\usepackage{listings}
+\usepackage{hyperref}
+
+\lstset{
+  basicstyle=\ttfamily\scriptsize,
+  keywordstyle=\color{teal}\bfseries,
+  stringstyle=\color{amber},
+  backgroundcolor=\color{teal!5},
+  frame=single,
+  rulecolor=\color{teal!30},
+  breaklines=true,
+  showstringspaces=false,
+}
+
+\title[Vortex Analytics]{Vortex Retail Analytics Engine}
+\subtitle{Purplle Engineering Hiring Challenge}
+\author{Vasanth Singh}
+\date{\today}
+
+\begin{document}
+
+% ── 1. Title ──
+\begin{frame}
+  \titlepage
+\end{frame}
+
+% ── 2. Agenda ──
+\begin{frame}{Agenda}
+  \tableofcontents
+\end{frame}
+
+% ══════════════════════════════════════════
+\section{Problem Statement}
+% ══════════════════════════════════════════
+
+\begin{frame}{Problem Statement}
+  \begin{block}{Objective}
+    Transform raw CCTV footage from a Purplle retail store into
+    \textbf{structured behavioural events} and \textbf{real-time analytics}.
+  \end{block}
+
+  \vspace{0.4cm}
+
+  \begin{columns}[T]
+    \begin{column}{0.45\textwidth}
+      \textbf{Input}
+      \begin{itemize}
+        \item 5 CCTV clips (1080p, $\sim$20 min each)
+        \item Brigade Road, Bangalore store
+        \item Real POS transaction data
+        \item Store floor plan
+      \end{itemize}
+    \end{column}
+    \begin{column}{0.45\textwidth}
+      \textbf{Output}
+      \begin{itemize}
+        \item Footfall and unique visitor count
+        \item Conversion funnel (Entry to Purchase)
+        \item Zone dwell-time heatmaps
+        \item Queue depth and abandonment rates
+        \item Real-time anomaly alerts
+      \end{itemize}
+    \end{column}
+  \end{columns}
+\end{frame}
+
+% ══════════════════════════════════════════
+\section{System Architecture}
+% ══════════════════════════════════════════
+
+\begin{frame}{System Architecture}
+  \centering
+  \small
+  \begin{tabular}{ccccc}
+    \textbf{CCTV Clips} & $\longrightarrow$ & \textbf{CV Pipeline} & $\longrightarrow$ & \textbf{FastAPI} \\
+    5 cameras &  & YOLOv8-m + ByteTrack &  & POST /events/ingest \\
+    1080p     &  & Zone geometry        &  & Idempotent \\
+  \end{tabular}
+
+  \vspace{0.3cm}
+  $\Big\downarrow$
+  \vspace{0.2cm}
+
+  \begin{tabular}{ccccc}
+    \textbf{PostgreSQL 16} & $\longrightarrow$ & \textbf{Analytics APIs} & $\longrightarrow$ & \textbf{TTL Cache (3s)} \\
+    asyncpg &  & /metrics, /funnel &  &  \\
+    PK dedup &  & /heatmap, /anomalies &  &  \\
+  \end{tabular}
+
+  \vspace{0.3cm}
+  $\Big\downarrow$
+  \vspace{0.2cm}
+
+  \begin{tabular}{ccc}
+    \textbf{WebSocket} & $\longrightarrow$ & \textbf{Web + Terminal Dashboards} \\
+    /ws/stores/\{id\} &  & Real-time updates every 2s \\
+  \end{tabular}
+\end{frame}
+
+% ══════════════════════════════════════════
+\section{CV Pipeline}
+% ══════════════════════════════════════════
+
+\begin{frame}{CV Pipeline -- Detection and Tracking}
+  \begin{columns}[T]
+    \begin{column}{0.50\textwidth}
+      \textbf{Person Detection}
+      \begin{itemize}
+        \item Model: YOLOv8-m (Medium)
+        \item Resolution: \texttt{imgsz=320} for CPU speed
+        \item Confidence: \texttt{conf=0.20}
+        \item Sampling: 5 fps subsampling
+      \end{itemize}
+
+      \vspace{0.3cm}
+      \textbf{Multi-Object Tracking}
+      \begin{itemize}
+        \item ByteTrack via \texttt{supervision} library
+        \item Persistent track IDs per camera
+        \item Continuous visitor trajectories
+      \end{itemize}
+    \end{column}
+    \begin{column}{0.45\textwidth}
+      \begin{block}{Results (Brigade Dataset)}
+        \centering
+        \begin{tabular}{lr}
+          \toprule
+          \textbf{Metric} & \textbf{Value} \\
+          \midrule
+          Frames processed & 19,515 \\
+          Events emitted & 193 \\
+          Unique visitors & 56 \\
+          Staff flagged & 55 \\
+          REENTRY events & 9 \\
+          Avg confidence & 0.710 \\
+          Total time & $\sim$46 min \\
+          \bottomrule
+        \end{tabular}
+      \end{block}
+    \end{column}
+  \end{columns}
+\end{frame}
+
+\begin{frame}{CV Pipeline -- Event Generation}
+  \begin{columns}[T]
+    \begin{column}{0.48\textwidth}
+      \textbf{Zone Events}
+      \begin{itemize}
+        \item Entry/Exit: Signed line crossing
+        \item Zone Enter/Exit: Point-in-polygon test
+        \item Zone Dwell: 30-second cadence timer
+        \item Billing Queue: Join/Leave/Abandon
+      \end{itemize}
+
+      \vspace{0.3cm}
+      \textbf{Staff Detection}
+      \begin{itemize}
+        \item Primary: HSV uniform colour match
+        \item Secondary: Dwell-pattern heuristic
+        \item Stockroom: forced staff flag
+      \end{itemize}
+    \end{column}
+    \begin{column}{0.48\textwidth}
+      \textbf{Re-entry Detection}
+      \begin{itemize}
+        \item 5-minute sliding appearance buffer
+        \item 3-bin HSV histogram signature
+        \item Cosine similarity threshold: 0.90
+        \item Self-pruning cache
+      \end{itemize}
+
+      \vspace{0.3cm}
+      \textbf{Cross-Camera Dedup}
+      \begin{itemize}
+        \item Key: (visitor\_id, zone\_id)
+        \item 3-second suppression window
+        \item Auto-prunes every 50 frames
+      \end{itemize}
+    \end{column}
+  \end{columns}
+\end{frame}
+
+% ══════════════════════════════════════════
+\section{Camera Mapping}
+% ══════════════════════════════════════════
+
+\begin{frame}{Camera and Zone Mapping}
+  \centering
+  \begin{tabular}{llll}
+    \toprule
+    \textbf{Camera} & \textbf{Logical ID} & \textbf{Zone} & \textbf{Role} \\
+    \midrule
+    CAM 3 & CAM\_ENTRY\_01 & Glass doorway & Entry line crossing \\
+    CAM 1 & CAM\_FLOOR\_SKIN & Skincare & Product floor \\
+    CAM 2 & CAM\_FLOOR\_MAKEUP & Makeup & Product floor \\
+    CAM 5 & CAM\_CASH\_COUNTER & Cash Counter & Billing queue \\
+    CAM 4 & CAM\_STOCKROOM & Stockroom & Staff-only \\
+    \bottomrule
+  \end{tabular}
+
+  \vspace{0.5cm}
+  \begin{block}{Dynamic Resolution}
+    Queue detection reads the \texttt{type: "billing"} flag from config ---
+    no camera IDs are hardcoded. Re-pointing billing to another camera is
+    a config change, not a code change.
+  \end{block}
+\end{frame}
+
+% ══════════════════════════════════════════
+\section{API Design}
+% ══════════════════════════════════════════
+
+\begin{frame}{API Endpoints}
+  \centering
+  \small
+  \begin{tabular}{lll}
+    \toprule
+    \textbf{Method} & \textbf{Path} & \textbf{Description} \\
+    \midrule
+    GET & /health & Service health + staleness \\
+    POST & /events/ingest & Batch event ingest (idempotent) \\
+    POST & /pos/ingest & POS transaction ingest \\
+    GET & /stores/\{id\}/metrics & Footfall, conversion, queue depth \\
+    GET & /stores/\{id\}/funnel & Conversion pipeline stages \\
+    GET & /stores/\{id\}/heatmap & Zone intensity (0--100) \\
+    GET & /stores/\{id\}/anomalies & Alerts with severity \\
+    GET & /stores/\{id\}/events & Paginated raw event list \\
+    WS & /ws/stores/\{id\} & Real-time WebSocket stream \\
+    \bottomrule
+  \end{tabular}
+\end{frame}
+
+\begin{frame}{Idempotent Partial-Success Ingest}
+  \begin{columns}[T]
+    \begin{column}{0.48\textwidth}
+      \textbf{Response Codes}
+      \begin{itemize}
+        \item \textbf{200} -- All events accepted
+        \item \textbf{207} -- Some rejected (partial success)
+        \item \textbf{413} -- Batch exceeds 500 limit
+      \end{itemize}
+
+      \vspace{0.3cm}
+      \textbf{Idempotency}
+      \begin{itemize}
+        \item UUID primary key on event\_id
+        \item ON CONFLICT DO NOTHING
+        \item Pipeline retries are always safe
+      \end{itemize}
+
+      \vspace{0.3cm}
+      \textbf{Two-Phase Abandon}
+      \begin{enumerate}
+        \item Pipeline emits best-guess LEAVE/ABANDON
+        \item API reclassifies after POS ingest
+      \end{enumerate}
+    \end{column}
+    \begin{column}{0.48\textwidth}
+      \begin{block}{Response Example}
+\begin{lstlisting}[language={}]
+{
+  "accepted": 497,
+  "duplicates": 2,
+  "rejected": [
+    {
+      "event_id": "...",
+      "error": "invalid timestamp"
+    }
+  ]
+}
+\end{lstlisting}
+      \end{block}
+    \end{column}
+  \end{columns}
+\end{frame}
+
+% ══════════════════════════════════════════
+\section{Storage}
+% ══════════════════════════════════════════
+
+\begin{frame}{Event Schema and Storage}
+  \begin{columns}[T]
+    \begin{column}{0.48\textwidth}
+      \textbf{Unified Events Table}
+      \begin{itemize}
+        \item Single table with 10 columns
+        \item Single Pydantic model (BehaviourEvent)
+        \item Open metadata dict for extras
+        \item 10 event types via ActivityKind enum
+      \end{itemize}
+
+      \vspace{0.2cm}
+      \textbf{Event Types}\\
+      {\small ENTRY, EXIT, REENTRY, ZONE\_ENTER,
+      ZONE\_EXIT, ZONE\_DWELL, BILLING\_QUEUE\_JOIN,
+      BILLING\_QUEUE\_LEAVE, BILLING\_QUEUE\_ABANDON,
+      POS\_TRANSACTION}
+    \end{column}
+    \begin{column}{0.48\textwidth}
+      \textbf{PostgreSQL 16}
+      \begin{itemize}
+        \item asyncpg + SQLAlchemy async
+        \item PK idempotency on event\_id
+        \item Indexes on (store\_id, timestamp) and (event\_type, store\_id, timestamp)
+        \item O(log n) analytics queries
+      \end{itemize}
+
+      \vspace{0.2cm}
+      \textbf{Test Isolation}
+      \begin{itemize}
+        \item SQLite (aiosqlite) per test
+        \item Same schema on both dialects
+        \item Zero-setup, in-memory
+      \end{itemize}
+    \end{column}
+  \end{columns}
+\end{frame}
+
+% ══════════════════════════════════════════
+\section{Dashboards}
+% ══════════════════════════════════════════
+
+\begin{frame}{Real-Time Dashboards}
+  \begin{columns}[T]
+    \begin{column}{0.48\textwidth}
+      \textbf{Web Dashboard}
+      \begin{itemize}
+        \item Dark glassmorphism design
+        \item Teal/Amber colour scheme
+        \item Live sparkline trends
+        \item Zone intensity heatmap
+        \item Conversion funnel chart
+        \item Alert table with severity badges
+        \item Camera feed status strip
+      \end{itemize}
+
+      \vspace{0.2cm}
+      \textbf{Terminal Dashboard}
+      \begin{itemize}
+        \item Rich-powered TUI
+        \item 4-panel layout
+        \item Unicode sparklines
+      \end{itemize}
+    \end{column}
+    \begin{column}{0.48\textwidth}
+      \textbf{Streaming Architecture}
+      \begin{enumerate}
+        \item PostgreSQL stores all events
+        \item TTL cache (3s) shields DB from reads
+        \item WebSocket pushes unified payload
+        \item Both dashboards consume same endpoint
+      \end{enumerate}
+
+      \vspace{0.3cm}
+      \begin{block}{Key Property}
+        Whether 1 or 100 clients connect, the database
+        is queried at most \textbf{once every 3 seconds}.
+      \end{block}
+    \end{column}
+  \end{columns}
+\end{frame}
+
+% ══════════════════════════════════════════
+\section{Anomaly Detection}
+% ══════════════════════════════════════════
+
+\begin{frame}{Anomaly Detection}
+  \centering
+  \begin{tabular}{llp{6cm}}
+    \toprule
+    \textbf{Alert Type} & \textbf{Severity} & \textbf{Trigger} \\
+    \midrule
+    BILLING\_QUEUE\_SPIKE & CRITICAL & Queue depth above threshold for 2+ samples \\
+    CONVERSION\_DROP & WARN/INFO & Today's conversion below 7-day trailing average \\
+    DEAD\_ZONE & WARN & Known zone silent for 30+ minutes \\
+    STALE\_FEED & WARN & Camera feed 10+ minutes without events \\
+    \bottomrule
+  \end{tabular}
+
+  \vspace{0.5cm}
+  \begin{block}{Alert Structure}
+    Every alert includes: \texttt{type}, \texttt{severity},
+    \texttt{detail} (structured dict), and a human-readable
+    \texttt{suggested\_action} string.
+  \end{block}
+\end{frame}
+
+% ══════════════════════════════════════════
+\section{Testing}
+% ══════════════════════════════════════════
+
+\begin{frame}{Testing -- 41/41 Passing}
+  \begin{columns}[T]
+    \begin{column}{0.48\textwidth}
+      \textbf{Test Layers}
+      \begin{itemize}
+        \item Pure-Python unit tests\\
+          {\small Geometry, tracking, caching, dispatch}\\
+          {\small No torch/OpenCV -- runs in under 2s}
+
+        \vspace{0.2cm}
+        \item In-process HTTP tests\\
+          {\small Every endpoint via httpx.AsyncClient}\\
+          {\small Fresh SQLite DB per test}
+      \end{itemize}
+    \end{column}
+    \begin{column}{0.48\textwidth}
+      \textbf{What We Test}
+      \begin{itemize}
+        \item Idempotent ingest + dedup
+        \item Partial-success (207)
+        \item Oversized batch (413)
+        \item Staff exclusion from footfall
+        \item Conversion with POS correlation
+        \item Abandonment reclassification
+        \item Funnel monotonicity
+        \item Heatmap normalisation
+        \item Queue spike alerts
+        \item UUID uniqueness (1000 events)
+        \item Pydantic schema compliance
+        \item Cross-camera dedup
+      \end{itemize}
+    \end{column}
+  \end{columns}
+\end{frame}
+
+% ══════════════════════════════════════════
+\section{Design Decisions}
+% ══════════════════════════════════════════
+
+\begin{frame}{Key Design Decisions}
+  \begin{columns}[T]
+    \begin{column}{0.48\textwidth}
+      \begin{block}{YOLOv8-m over YOLOv8-L}
+        CPU-friendly. All 5 clips finish in
+        $\sim$46 min without a GPU.
+      \end{block}
+
+      \vspace{0.15cm}
+      \begin{block}{Unified Events Table}
+        Every query joins across event types.
+        Split tables would need UNION ALL everywhere.
+      \end{block}
+
+      \vspace{0.15cm}
+      \begin{block}{HSV Staff Detection}
+        Near-zero cost vs CLIP zero-shot.
+        Two signals: colour + dwell pattern.
+      \end{block}
+    \end{column}
+    \begin{column}{0.48\textwidth}
+      \begin{block}{WebSocket over SSE}
+        Serves both web and terminal dashboards.
+        Native Python client support.
+      \end{block}
+
+      \vspace{0.15cm}
+      \begin{block}{Bounded Re-entry Cache}
+        5-min window. O(live candidates) cost,
+        not O(all history).
+      \end{block}
+
+      \vspace{0.15cm}
+      \begin{block}{Two-Phase Abandon}
+        Pipeline emits best-guess. API reclassifies
+        after POS ingest for accuracy.
+      \end{block}
+    \end{column}
+  \end{columns}
+\end{frame}
+
+% ══════════════════════════════════════════
+\section{Summary}
+% ══════════════════════════════════════════
+
+\begin{frame}{Summary}
+  \begin{columns}[T]
+    \begin{column}{0.52\textwidth}
+      \textbf{What Was Delivered}
+      \begin{itemize}
+        \item End-to-end CCTV to insights pipeline
+        \item YOLOv8-m + ByteTrack person tracking
+        \item 10 structured event types
+        \item Staff detection (HSV + dwell)
+        \item Re-entry detection (5-min cosine cache)
+        \item Cross-camera deduplication
+        \item Containerised FastAPI + PostgreSQL
+        \item Idempotent, partial-success API
+        \item POS-correlated abandon classification
+        \item Real-time Web + Terminal dashboards
+        \item 4 anomaly detectors
+        \item \textbf{41/41 tests passing}
+      \end{itemize}
+    \end{column}
+    \begin{column}{0.44\textwidth}
+      \begin{block}{Quick Start}
+\begin{lstlisting}[language=bash, basicstyle=\ttfamily\tiny]
+# Launch backend
+docker-compose up --build
+
+# Install pipeline deps
+pip install -r \
+  requirements-pipeline.txt
+
+# Run CV pipeline
+.\pipeline\run_windows.ps1
+
+# Open dashboard
+# http://localhost:8000/
+\end{lstlisting}
+      \end{block}
+
+      \vspace{0.2cm}
+      \begin{block}{Tech Stack}
+        \centering
+        \small
+        Python 3.11+ -- FastAPI -- SQLAlchemy\\
+        PostgreSQL 16 -- YOLOv8 -- ByteTrack\\
+        Pydantic v2 -- Docker -- Rich
+      \end{block}
+    \end{column}
+  \end{columns}
+\end{frame}
+
+% ── Thank You ──
+\begin{frame}
+  \centering
+  \vspace{2cm}
+  {\Huge\bfseries\color{teal} Thank You}
+
+  \vspace{1cm}
+  {\Large Vasanth Singh}
+
+  \vspace{0.5cm}
+  {\large\color{gray} Vortex Retail Analytics Engine}
+
+  \vspace{0.3cm}
+  {\small\color{gray} Purplle Engineering Hiring Challenge}
+\end{frame}
+
+\end{document}
