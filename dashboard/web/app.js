@@ -131,10 +131,10 @@ function processStream(data) {
       <tr class="slide-in">
         <td><strong>${x.type.replace(/_/g, " ")}</strong></td>
         <td><span class="sev ${x.severity}">${x.severity}</span></td>
-        <td><code style="font-size:11px;color:var(--text-muted);">${Object.entries(x.detail).map(([k,v]) => `${k}: ${JSON.stringify(v)}`).join(" · ")}</code></td>
-        <td style="color:var(--text-muted);">${x.suggested_action || ""}</td>
+        <td><code style="font-size:11px;color:var(--text-secondary);">${Object.entries(x.detail).map(([k,v]) => `${k}: ${JSON.stringify(v)}`).join(" · ")}</code></td>
+        <td style="color:var(--text-secondary);">${x.suggested_action || ""}</td>
       </tr>
-    `).join("") : `<tr><td colspan="4" style="color:var(--text-light); padding:24px 14px;">✓ No active alerts</td></tr>`;
+    `).join("") : `<tr><td colspan="4" style="color:var(--text-tertiary); padding:24px 14px; text-align:center;">✓ No active alerts</td></tr>`;
     patchIfChanged("alertRows", rows);
   }
 
@@ -147,8 +147,8 @@ function processStream(data) {
       document.querySelectorAll(".cam .meta").forEach(el => {
         el.textContent = ageMin + "m ago";
         const dot = el.parentElement.querySelector(".dot");
-        if (outlet0.stale) { dot.style.background = "var(--color-warn)"; }
-        else { dot.style.background = "var(--color-ok)"; }
+        if (outlet0.stale) { dot.style.background = "var(--color-warning)"; }
+        else { dot.style.background = "var(--color-success)"; }
       });
     }
   }

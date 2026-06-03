@@ -84,10 +84,17 @@ python pipeline/preview.py
 
 Press `q` to quit. Uses YOLOv8-n (nano) for speed.
 
-### Step 5 — Run the CV Pipeline
+### Step 5 - Run the CV Pipeline
 
 **Windows (PowerShell):**
 ```powershell
+.\pipeline\run_windows.cmd
+```
+
+If you prefer to call the PowerShell script directly, use a process-scope bypass first:
+
+```powershell
+Set-ExecutionPolicy -Scope Process RemoteSigned
 .\pipeline\run_windows.ps1
 ```
 

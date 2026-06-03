@@ -23,8 +23,14 @@ class AppConfig:
         # so that tests and quick local runs work without any setup.
         # docker-compose always supplies DATABASE_URL for production.
         fallback_db = "sqlite+aiosqlite:///./data/vortex.db"
+        db_url = os.getenv("DATABASE_URL", fallback_db)
+        if db_url.startswith("postgres://"):
+            db_url = db_url.replace("postgres://", "postgresql+asyncpg://", 1)
+        elif db_url.startswith("postgresql://"):
+            db_url = db_url.replace("postgresql://", "postgresql+asyncpg://", 1)
+            
         return cls(
-            database_url=os.getenv("DATABASE_URL", fallback_db),
+            database_url=db_url,
             log_level=os.getenv("LOG_LEVEL", "INFO"),
             stale_feed_minutes=int(os.getenv("STALE_FEED_MINUTES", "10")),
             queue_spike_threshold=int(os.getenv("QUEUE_SPIKE_THRESHOLD", "7")),
